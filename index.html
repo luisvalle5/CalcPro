@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Proyecto de Cálculo 2 - Grupo 5</title>
+    <title>Calculadora Maestra de Cálculo</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -18,8 +18,12 @@
     <!-- Math.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.8.0/math.js"></script>
     
-    <!-- Function Plot (Graphing) -->
+    <!-- Function Plot (Graphing 2D) -->
     <script src="https://unpkg.com/function-plot/dist/function-plot.js"></script>
+    
+    <!-- Three.js & OrbitControls (Graphing 3D) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     
     <!-- KaTeX (Math Rendering) -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
@@ -40,6 +44,7 @@
         
         /* Button press effect */
         .btn-math:active { transform: translateY(1px); }
+        canvas { outline: none; }
     </style>
 </head>
 <body>
@@ -103,9 +108,143 @@
             return <div ref={containerRef} className="latex-container text-lg text-gray-800 my-2"></div>;
         };
 
+        // --- Componente de Escena 3D (Three.js) ---
+        const ThreeScene = ({ f, a, b }) => {
+            const mountRef = useRef(null);
+
+            useEffect(() => {
+                if (!mountRef.current) return;
+
+                // Variables declaradas en el scope superior del efecto para limpieza segura
+                let geometry = null;
+                let material = null;
+                let animationId = null;
+
+                // 1. Configuración de Escena
+                const width = mountRef.current.clientWidth;
+                const height = mountRef.current.clientHeight;
+                const scene = new THREE.Scene();
+                scene.background = new THREE.Color(0xffffff);
+
+                // Cámara
+                const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+                camera.position.set(5, 5, 10);
+
+                // Renderizador
+                const renderer = new THREE.WebGLRenderer({ antialias: true });
+                renderer.setSize(width, height);
+                mountRef.current.appendChild(renderer.domElement);
+
+                // Controles (Orbit)
+                const controls = new THREE.OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+
+                // Luces
+                const ambientLight = new THREE.AmbientLight(0x404040);
+                scene.add(ambientLight);
+                const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+                dirLight.position.set(5, 10, 7);
+                scene.add(dirLight);
+
+                // Ejes y Grilla
+                const axesHelper = new THREE.AxesHelper(5);
+                scene.add(axesHelper);
+                const gridHelper = new THREE.GridHelper(20, 20);
+                scene.add(gridHelper);
+
+                // 2. Generar Geometría de Revolución
+                try {
+                    const points = [];
+                    const segments = 100; // Calidad de la curva
+                    const start = parseFloat(a);
+                    const end = parseFloat(b);
+                    const range = end - start;
+                    
+                    if (range !== 0) {
+                        for (let i = 0; i <= segments; i++) {
+                            const x = start + (i / segments) * range;
+                            try {
+                                const y = math.evaluate(f, { x: x });
+                                if (isFinite(y)) {
+                                    // Three.js Lathe gira alrededor de Y.
+                                    // Mapeamos: X_math -> Y_three, f(x)_math -> X_three (radio)
+                                    // Usamos valor absoluto para el radio porque LatheGeometry espera radios positivos
+                                    points.push(new THREE.Vector2(Math.abs(y), x));
+                                }
+                            } catch (e) {}
+                        }
+                    }
+
+                    if (points.length > 1) {
+                        // Asignamos a las variables let declaradas arriba
+                        geometry = new THREE.LatheGeometry(points, 32); // 32 segmentos radiales
+                        
+                        // Material Doble Cara para ver por dentro
+                        material = new THREE.MeshPhongMaterial({ 
+                            color: 0x3b82f6, 
+                            side: THREE.DoubleSide, 
+                            transparent: true, 
+                            opacity: 0.8,
+                            shininess: 60
+                        });
+                        
+                        const mesh = new THREE.Mesh(geometry, material);
+                        
+                        // Alineación: Lathe gira en Y. Nosotros queremos girar en X (Math).
+                        // La geometría se creó con Y como eje axial.
+                        // Rotamos -90 grados en Z para que el eje axial (Y_three) se acueste sobre el eje X (X_three).
+                        mesh.rotation.z = -Math.PI / 2;
+                        
+                        scene.add(mesh);
+                        
+                        // Centrar cámara en el objeto
+                        const box = new THREE.Box3().setFromObject(mesh);
+                        const center = box.getCenter(new THREE.Vector3());
+                        const size = box.getSize(new THREE.Vector3());
+                        const maxDim = Math.max(size.x, size.y, size.z);
+                        
+                        // Ajustar controles
+                        controls.target.copy(center);
+                        camera.position.set(center.x + maxDim, center.y + maxDim/2, center.z + maxDim);
+                        camera.lookAt(center);
+                    }
+
+                } catch (err) {
+                    console.error("Error generando 3D", err);
+                }
+
+                // Loop de Animación
+                const animate = () => {
+                    animationId = requestAnimationFrame(animate);
+                    controls.update();
+                    renderer.render(scene, camera);
+                };
+                animate();
+
+                // Cleanup
+                return () => {
+                    cancelAnimationFrame(animationId);
+                    if (mountRef.current) {
+                        try {
+                            mountRef.current.removeChild(renderer.domElement);
+                        } catch (e) {
+                            console.warn("Error removing renderer", e);
+                        }
+                    }
+                    if (geometry) geometry.dispose();
+                    if (material) material.dispose();
+                    renderer.dispose();
+                };
+            }, [f, a, b]);
+
+            return <div ref={mountRef} className="w-full h-full" />;
+        };
+
+
         // --- Lógica Principal ---
         const App = () => {
             const [mode, setMode] = useState('area'); 
+            const [view3D, setView3D] = useState(false); // Toggle 2D/3D
             const [inputs, setInputs] = useState({
                 f: 'x^2',
                 g: '0', 
@@ -113,7 +252,6 @@
                 b: '2',
                 n: '100'
             });
-            // Estado para saber qué input se está editando para insertar símbolos
             const [activeInput, setActiveInput] = useState('f');
             
             const [result, setResult] = useState(null);
@@ -131,18 +269,15 @@
                 integral: { title: "Integrales Indefinidas/Básicas", icon: "sigma", desc: "Evaluación directa y métodos básicos." }
             };
 
-            // Manejo de inputs
             const handleChange = (e) => {
                 setInputs({ ...inputs, [e.target.name]: e.target.value });
                 setError('');
             };
 
-            // Actualizar input activo al hacer foco
             const handleFocus = (e) => {
                 setActiveInput(e.target.name);
             };
 
-            // Insertar símbolo matemático en la posición del cursor
             const insertSymbol = (symbol) => {
                 const inputEl = document.getElementById(activeInput);
                 if (!inputEl) return;
@@ -157,7 +292,6 @@
 
                 setInputs({ ...inputs, [activeInput]: newValue });
                 
-                // Recuperar el foco y mover el cursor después del símbolo insertado
                 setTimeout(() => {
                     inputEl.focus();
                     const newCursorPos = start + symbol.length;
@@ -165,16 +299,13 @@
                 }, 0);
             };
 
-            // Limpiar todo
             const clearAll = () => {
                 setInputs({ f: '', g: '', a: '', b: '', n: '100' });
                 setResult(null);
                 setError('');
-                // Poner foco en el primer input
                 setTimeout(() => document.getElementById('f')?.focus(), 0);
             };
 
-            // Validación
             const validate = () => {
                 try {
                     const a = parseFloat(inputs.a);
@@ -201,7 +332,6 @@
                 }
             };
 
-            // Integración numérica
             const integrate = (funcStr, a, b, n = 100) => {
                 if (n % 2 !== 0) n++;
                 const h = (b - a) / n;
@@ -215,11 +345,15 @@
                 return (h / 3) * sum;
             };
 
-            // Cálculo principal
             const calculate = () => {
                 if (mode !== 'integral' && !validate()) return;
                 setLoading(true);
                 setResult(null);
+
+                // Si estamos en volumen, sugerimos vista 3D activándola si no está activa
+                if (mode === 'volumen') {
+                    // Opcional: setView3D(true);
+                }
 
                 setTimeout(() => {
                     try {
@@ -316,9 +450,10 @@
                 }, 500);
             };
 
-            // Gráfica
+            // Efecto Gráfica 2D
             useEffect(() => {
-                if (!result || !graphRef.current) return;
+                // Solo renderizar 2D si hay resultado y NO estamos en modo 3D
+                if (!result || !graphRef.current || view3D) return;
                 
                 const width = graphRef.current.clientWidth;
                 const height = 400;
@@ -362,9 +497,8 @@
                 } catch (e) {
                     console.log("Error graficando", e);
                 }
-            }, [result, mode, inputs.f, inputs.g, inputs.a, inputs.b]);
+            }, [result, mode, inputs.f, inputs.g, inputs.a, inputs.b, view3D]);
 
-            // Botones del teclado
             const mathButtons = [
                 { label: '+', val: '+' }, { label: '-', val: '-' }, { label: '*', val: '*' }, { label: '/', val: '/' },
                 { label: 'x^n', val: '^' }, { label: '√', val: 'sqrt(' }, { label: 'π', val: 'pi' }, { label: 'e', val: 'e' },
@@ -387,7 +521,7 @@
                                 {Object.keys(modes).map((key) => (
                                     <button
                                         key={key}
-                                        onClick={() => { setMode(key); setResult(null); setError(''); }}
+                                        onClick={() => { setMode(key); setResult(null); setError(''); setView3D(false); }}
                                         className={`w-full flex items-center p-3 rounded-lg transition-all ${
                                             mode === key 
                                             ? 'bg-blue-600 text-white shadow-lg' 
@@ -546,14 +680,43 @@
 
                                         {/* Columna Gráfica */}
                                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col">
-                                            <h3 className="text-lg font-bold text-gray-800 border-b pb-2 mb-4">Representación Gráfica</h3>
-                                            <div className="flex-grow flex items-center justify-center bg-gray-50 rounded-lg border border-gray-200 relative">
-                                                {/* Contenedor referenciado directamente */}
-                                                <div ref={graphRef} className="graph-wrapper"></div>
-                                                <p className="absolute bottom-2 right-2 text-xs text-gray-400 pointer-events-none">Powered by Function Plot</p>
+                                            <div className="flex justify-between items-center border-b pb-2 mb-4">
+                                                <h3 className="text-lg font-bold text-gray-800">Representación Gráfica</h3>
+                                                {/* Toggle 3D solo visible en modo volumen */}
+                                                {mode === 'volumen' && (
+                                                    <div className="flex bg-gray-100 p-1 rounded-lg">
+                                                        <button 
+                                                            onClick={() => setView3D(false)}
+                                                            className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${!view3D ? 'bg-white text-blue-600 shadow' : 'text-gray-500 hover:text-gray-700'}`}
+                                                        >
+                                                            Perfil 2D
+                                                        </button>
+                                                        <button 
+                                                            onClick={() => setView3D(true)}
+                                                            className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${view3D ? 'bg-white text-blue-600 shadow' : 'text-gray-500 hover:text-gray-700'}`}
+                                                        >
+                                                            Sólido 3D
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            
+                                            <div className="flex-grow flex items-center justify-center bg-gray-50 rounded-lg border border-gray-200 relative overflow-hidden">
+                                                {view3D && mode === 'volumen' ? (
+                                                    <ThreeScene f={inputs.f} a={inputs.a} b={inputs.b} />
+                                                ) : (
+                                                    <>
+                                                        <div ref={graphRef} className="graph-wrapper"></div>
+                                                        <p className="absolute bottom-2 right-2 text-xs text-gray-400 pointer-events-none">Powered by Function Plot</p>
+                                                    </>
+                                                )}
                                             </div>
                                             <p className="text-xs text-center text-gray-500 mt-2">
-                                                {mode === 'volumen' ? 'Nota: Se muestra el perfil 2D. Imagine la rotación en el eje X.' : 'Región sombreada representa el cálculo.'}
+                                                {view3D && mode === 'volumen' 
+                                                    ? 'Arrastra para rotar, rueda para zoom. El sólido gira en el eje X (rojo).' 
+                                                    : mode === 'volumen' 
+                                                        ? 'Vista 2D del perfil. Cambia a 3D para ver la revolución.' 
+                                                        : 'Región sombreada representa el cálculo.'}
                                             </p>
                                         </div>
                                     </div>
@@ -569,5 +732,4 @@
         root.render(<App />);
     </script>
 </body>
-
 </html>
