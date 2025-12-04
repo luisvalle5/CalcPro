@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calculadora Maestra de Cálculo</title>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Math.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.8.0/math.js"></script>
+    
+    <!-- Function Plot (Graphing) -->
+    <script src="https://unpkg.com/function-plot/dist/function-plot.js"></script>
+    
+    <!-- KaTeX (Math Rendering) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        .latex-container { overflow-x: auto; padding: 10px 0; }
+        .graph-wrapper { width: 100%; height: 400px; background: white; border-radius: 8px; overflow: hidden; position: relative; }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #c7c7cc; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #a1a1aa; }
+        
+        /* Button press effect */
+        .btn-math:active { transform: translateY(1px); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- Componente Seguro para Iconos Lucide ---
+        const Icon = ({ name, className }) => {
+            const containerRef = useRef(null);
+
+            useEffect(() => {
+                const lucide = window.lucide;
+                if (!containerRef.current || !lucide) return;
+
+                const pascalName = name
+                    .split('-')
+                    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+                    .join('');
+
+                const iconDef = lucide.icons[pascalName];
+
+                if (iconDef) {
+                    containerRef.current.innerHTML = '';
+                    try {
+                        if (typeof lucide.createElement === 'function') {
+                            const svg = lucide.createElement(iconDef);
+                            if (className) {
+                                const classes = className.split(' ').filter(Boolean);
+                                classes.forEach(c => svg.classList.add(c));
+                            }
+                            containerRef.current.appendChild(svg);
+                        } else if (typeof iconDef.toSvg === 'function') {
+                             containerRef.current.innerHTML = iconDef.toSvg({ class: className });
+                        }
+                    } catch (e) {
+                        console.error(`Error generando icono ${name}:`, e);
+                    }
+                }
+            }, [name, className]);
+
+            return <span ref={containerRef} className="inline-flex items-center justify-center" />;
+        };
+
+        // --- Componente para renderizar LaTeX ---
+        const LatexRenderer = ({ formula }) => {
+            const containerRef = useRef(null);
+            useEffect(() => {
+                if (containerRef.current) {
+                    try {
+                        katex.render(formula, containerRef.current, {
+                            throwOnError: false,
+                            displayMode: true
+                        });
+                    } catch (e) {
+                        console.error("Error rendering LaTeX", e);
+                    }
+                }
+            }, [formula]);
+            return <div ref={containerRef} className="latex-container text-lg text-gray-800 my-2"></div>;
+        };
+
+        // --- Lógica Principal ---
+        const App = () => {
+            const [mode, setMode] = useState('area'); 
+            const [inputs, setInputs] = useState({
+                f: 'x^2',
+                g: '0', 
+                a: '0',
+                b: '2',
+                n: '100'
+            });
+            // Estado para saber qué input se está editando para insertar símbolos
+            const [activeInput, setActiveInput] = useState('f');
+            
+            const [result, setResult] = useState(null);
+            const [error, setError] = useState('');
+            const [loading, setLoading] = useState(false);
+            
+            const graphRef = useRef(null);
+
+            const modes = {
+                area: { title: "Área de Regiones Planas", icon: "square", desc: "Calcula el área bajo la curva o entre dos curvas." },
+                volumen: { title: "Volumen de Revolución (Discos)", icon: "cylinder", desc: "Gira la región alrededor del eje X." },
+                arco: { title: "Longitud de Arco", icon: "activity", desc: "Longitud de la curva f(x) en el intervalo [a,b]." },
+                superficie: { title: "Área de Superficie", icon: "globe", desc: "Área generada al rotar el arco alrededor del eje X." },
+                centroide: { title: "Centro de Gravedad", icon: "crosshair", desc: "Encuentra el punto de equilibrio (x̄, ȳ)." },
+                integral: { title: "Integrales Indefinidas/Básicas", icon: "sigma", desc: "Evaluación directa y métodos básicos." }
+            };
+
+            // Manejo de inputs
+            const handleChange = (e) => {
+                setInputs({ ...inputs, [e.target.name]: e.target.value });
+                setError('');
+            };
+
+            // Actualizar input activo al hacer foco
+            const handleFocus = (e) => {
+                setActiveInput(e.target.name);
+            };
+
+            // Insertar símbolo matemático en la posición del cursor
+            const insertSymbol = (symbol) => {
+                const inputEl = document.getElementById(activeInput);
+                if (!inputEl) return;
+
+                const start = inputEl.selectionStart;
+                const end = inputEl.selectionEnd;
+                const text = inputs[activeInput];
+                
+                const before = text.substring(0, start);
+                const after = text.substring(end, text.length);
+                const newValue = before + symbol + after;
+
+                setInputs({ ...inputs, [activeInput]: newValue });
+                
+                // Recuperar el foco y mover el cursor después del símbolo insertado
+                setTimeout(() => {
+                    inputEl.focus();
+                    const newCursorPos = start + symbol.length;
+                    inputEl.setSelectionRange(newCursorPos, newCursorPos);
+                }, 0);
+            };
+
+            // Limpiar todo
+            const clearAll = () => {
+                setInputs({ f: '', g: '', a: '', b: '', n: '100' });
+                setResult(null);
+                setError('');
+                // Poner foco en el primer input
+                setTimeout(() => document.getElementById('f')?.focus(), 0);
+            };
+
+            // Validación
+            const validate = () => {
+                try {
+                    const a = parseFloat(inputs.a);
+                    const b = parseFloat(inputs.b);
+                    
+                    if (isNaN(a) || isNaN(b)) throw new Error("Los límites de integración deben ser números.");
+                    if (a === b && mode !== 'integral') throw new Error("Los límites superior e inferior no pueden ser iguales para áreas/volúmenes.");
+                    
+                    const steps = 20;
+                    const dx = (b - a) / steps;
+                    for (let i = 0; i <= steps; i++) {
+                        const xVal = a + i * dx;
+                        try {
+                            const val = math.evaluate(inputs.f, { x: xVal });
+                            if (!isFinite(val)) throw new Error(`La función no es continua o se indefine en x ≈ ${xVal.toFixed(2)}.`);
+                        } catch(e) {
+                             throw new Error(`Error al evaluar la función en x = ${xVal.toFixed(2)}. Verifique la sintaxis.`);
+                        }
+                    }
+                    return true;
+                } catch (err) {
+                    setError(err.message);
+                    return false;
+                }
+            };
+
+            // Integración numérica
+            const integrate = (funcStr, a, b, n = 100) => {
+                if (n % 2 !== 0) n++;
+                const h = (b - a) / n;
+                let sum = math.evaluate(funcStr, { x: a }) + math.evaluate(funcStr, { x: b });
+                
+                for (let i = 1; i < n; i++) {
+                    const x = a + i * h;
+                    const val = math.evaluate(funcStr, { x });
+                    sum += (i % 2 === 0 ? 2 : 4) * val;
+                }
+                return (h / 3) * sum;
+            };
+
+            // Cálculo principal
+            const calculate = () => {
+                if (mode !== 'integral' && !validate()) return;
+                setLoading(true);
+                setResult(null);
+
+                setTimeout(() => {
+                    try {
+                        const a = parseFloat(inputs.a);
+                        const b = parseFloat(inputs.b);
+                        const f = inputs.f;
+                        const g = inputs.g || '0';
+                        
+                        let stepsData = [];
+                        let finalValue = 0;
+                        const fNode = math.parse(f);
+                        
+                        switch (mode) {
+                            case 'area':
+                                const areaExpr = `(${f}) - (${g})`;
+                                finalValue = integrate(`abs(${areaExpr})`, a, b);
+                                stepsData = [
+                                    `\\text{Fórmula: } A = \\int_{a}^{b} |f(x) - g(x)| dx`,
+                                    `\\text{Sustitución: } A = \\int_{${a}}^{${b}} |(${f}) - (${g})| dx`,
+                                    `\\text{Análisis: Se calcula la integral numérica de la diferencia absoluta.}`,
+                                ];
+                                break;
+                            case 'volumen':
+                                const volExpr = `(${f})^2`;
+                                const integralValVol = integrate(volExpr, a, b);
+                                finalValue = Math.PI * integralValVol;
+                                stepsData = [
+                                    `\\text{Método de Discos (Eje X): } V = \\pi \\int_{a}^{b} [f(x)]^2 dx`,
+                                    `\\text{Sustitución: } V = \\pi \\int_{${a}}^{${b}} [${f}]^2 dx`,
+                                    `\\text{Integral: } \\int_{${a}}^{${b}} (${f})^2 dx \\approx ${integralValVol.toFixed(4)}`,
+                                ];
+                                break;
+                            case 'arco':
+                                const deriv = math.derivative(fNode, 'x').toString();
+                                const arcExpr = `sqrt(1 + (${deriv})^2)`;
+                                finalValue = integrate(arcExpr, a, b);
+                                stepsData = [
+                                    `\\text{Fórmula: } L = \\int_{a}^{b} \\sqrt{1 + [f'(x)]^2} dx`,
+                                    `\\text{Derivada } f'(x): ${deriv}`,
+                                    `\\text{Integrando: } \\sqrt{1 + (${deriv})^2}`,
+                                    `\\text{Sustitución: } L = \\int_{${a}}^{${b}} \\sqrt{1 + (${deriv})^2} dx`
+                                ];
+                                break;
+                            case 'superficie':
+                                const derivS = math.derivative(fNode, 'x').toString();
+                                const surfExpr = `(${f}) * sqrt(1 + (${derivS})^2)`;
+                                const intSurf = integrate(surfExpr, a, b);
+                                finalValue = 2 * Math.PI * intSurf;
+                                stepsData = [
+                                    `\\text{Fórmula (Eje X): } S = 2\\pi \\int_{a}^{b} f(x)\\sqrt{1 + [f'(x)]^2} dx`,
+                                    `\\text{Derivada } f'(x): ${derivS}`,
+                                    `\\text{Sustitución: } S = 2\\pi \\int_{${a}}^{${b}} (${f})\\sqrt{1 + (${derivS})^2} dx`
+                                ];
+                                break;
+                            case 'centroide':
+                                const areaC = integrate(f, a, b);
+                                const momentX = integrate(`x * (${f})`, a, b);
+                                const momentY = integrate(`(${f})^2`, a, b) / 2;
+                                const xBar = momentX / areaC;
+                                const yBar = momentY / areaC;
+                                finalValue = `(\\bar{x}, \\bar{y}) = (${xBar.toFixed(4)}, ${yBar.toFixed(4)})`;
+                                stepsData = [
+                                    `\\text{Área } A = \\int_{a}^{b} f(x) dx \\approx ${areaC.toFixed(4)}`,
+                                    `\\text{Momento } M_y = \\int_{a}^{b} x f(x) dx \\approx ${momentX.toFixed(4)}`,
+                                    `\\text{Momento } M_x = \\frac{1}{2} \\int_{a}^{b} [f(x)]^2 dx \\approx ${momentY.toFixed(4)}`,
+                                    `\\bar{x} = \\frac{M_y}{A}, \\quad \\bar{y} = \\frac{M_x}{A}`
+                                ];
+                                break;
+                            case 'integral':
+                                let type = "General";
+                                if (f.includes('sin') || f.includes('cos') || f.includes('tan')) type = "Trigonométrica";
+                                if (f.includes('/') && !f.includes('sin')) type = "Racional / Fracciones Simples";
+                                const valDef = integrate(f, a, b);
+                                finalValue = valDef;
+                                stepsData = [
+                                    `\\text{Tipo detectado: } ${type}`,
+                                    `\\text{Integral Definida: } I = \\int_{${a}}^{${b}} (${f}) dx`,
+                                    `\\text{Nota: Esta herramienta evalúa numéricamente.}`,
+                                    `\\text{Para funciones racionales, verifique si el denominador tiene raíces en [${a}, ${b}].}`
+                                ];
+                                break;
+                        }
+
+                        setResult({
+                            value: typeof finalValue === 'number' ? finalValue.toFixed(5) : finalValue,
+                            steps: stepsData
+                        });
+
+                    } catch (err) {
+                        setError("Error en el cálculo: " + err.message);
+                    } finally {
+                        setLoading(false);
+                    }
+                }, 500);
+            };
+
+            // Gráfica
+            useEffect(() => {
+                if (!result || !graphRef.current) return;
+                
+                const width = graphRef.current.clientWidth;
+                const height = 400;
+                const a = parseFloat(inputs.a);
+                const b = parseFloat(inputs.b);
+                const g = inputs.g || '0';
+                
+                let data = [
+                    {
+                        fn: inputs.f,
+                        range: [a, b],
+                        closed: true,
+                        color: '#3b82f6'
+                    },
+                    {
+                        fn: inputs.f,
+                        color: '#3b82f6'
+                    }
+                ];
+
+                if (mode === 'area' && g && g !== '0') {
+                    data.push({
+                        fn: g,
+                        range: [a, b],
+                        closed: true,
+                        color: '#ef4444'
+                    });
+                    data.push({ fn: g, color: '#ef4444' });
+                }
+
+                try {
+                    functionPlot({
+                        target: graphRef.current,
+                        width,
+                        height,
+                        yAxis: { domain: [-5, 10] },
+                        xAxis: { domain: [a - 1, b + 1] },
+                        grid: true,
+                        data: data
+                    });
+                } catch (e) {
+                    console.log("Error graficando", e);
+                }
+            }, [result, mode, inputs.f, inputs.g, inputs.a, inputs.b]);
+
+            // Botones del teclado
+            const mathButtons = [
+                { label: '+', val: '+' }, { label: '-', val: '-' }, { label: '*', val: '*' }, { label: '/', val: '/' },
+                { label: 'x^n', val: '^' }, { label: '√', val: 'sqrt(' }, { label: 'π', val: 'pi' }, { label: 'e', val: 'e' },
+                { label: 'sin', val: 'sin(' }, { label: 'cos', val: 'cos(' }, { label: 'tan', val: 'tan(' }, { label: 'log', val: 'log(' },
+                { label: '(', val: '(' }, { label: ')', val: ')' }, { label: 'x', val: 'x' }
+            ];
+
+            return (
+                <div className="min-h-screen p-4 md:p-8">
+                    <div className="max-w-6xl mx-auto">
+                        <header className="mb-8 text-center">
+                            <h1 className="text-3xl md:text-4xl font-bold text-gray-800 mb-2">Calculadora Integral Avanzada</h1>
+                            <p className="text-gray-600">Herramienta didáctica para el análisis de funciones y cálculo de sólidos.</p>
+                        </header>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                            
+                            {/* Panel de Navegación */}
+                            <div className="lg:col-span-3 space-y-2">
+                                {Object.keys(modes).map((key) => (
+                                    <button
+                                        key={key}
+                                        onClick={() => { setMode(key); setResult(null); setError(''); }}
+                                        className={`w-full flex items-center p-3 rounded-lg transition-all ${
+                                            mode === key 
+                                            ? 'bg-blue-600 text-white shadow-lg' 
+                                            : 'bg-white text-gray-700 hover:bg-gray-100'
+                                        }`}
+                                    >
+                                        <div className="w-5 h-5 mr-3">
+                                            <Icon name={modes[key].icon} className="w-5 h-5" />
+                                        </div>
+                                        <span className="font-medium text-sm text-left">{modes[key].title}</span>
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Panel Principal */}
+                            <div className="lg:col-span-9 space-y-6">
+                                
+                                {/* Tarjeta de Configuración */}
+                                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                                    <div className="flex justify-between items-start mb-4">
+                                        <div>
+                                            <h2 className="text-xl font-bold text-gray-800 flex items-center">
+                                                <Icon name="settings" className="w-5 h-5 mr-2" /> Configuración
+                                            </h2>
+                                            <p className="text-sm text-gray-500 mt-1">{modes[mode].desc}</p>
+                                        </div>
+                                        <button 
+                                            onClick={clearAll}
+                                            className="text-xs flex items-center bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1 rounded transition-colors"
+                                            title="Limpiar todos los campos"
+                                        >
+                                            <Icon name="trash-2" className="w-3 h-3 mr-1" /> Limpiar Datos
+                                        </button>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="col-span-2 md:col-span-1">
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">Función f(x)</label>
+                                            <input 
+                                                id="f"
+                                                type="text" 
+                                                name="f" 
+                                                value={inputs.f} 
+                                                onChange={handleChange}
+                                                onFocus={handleFocus}
+                                                className={`w-full p-2 border rounded font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 ${activeInput === 'f' ? 'border-blue-400 bg-blue-50' : 'border-gray-300'}`}
+                                                placeholder="ej. x^2, sin(x), sqrt(x)"
+                                            />
+                                        </div>
+
+                                        {(mode === 'area') && (
+                                            <div className="col-span-2 md:col-span-1">
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Función g(x) (Opcional)</label>
+                                                <input 
+                                                    id="g"
+                                                    type="text" 
+                                                    name="g" 
+                                                    value={inputs.g} 
+                                                    onChange={handleChange}
+                                                    onFocus={handleFocus}
+                                                    className={`w-full p-2 border rounded font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 ${activeInput === 'g' ? 'border-blue-400 bg-blue-50' : 'border-gray-300'}`}
+                                                    placeholder="ej. x, 0"
+                                                />
+                                            </div>
+                                        )}
+
+                                        <div className="grid grid-cols-2 gap-4 md:col-span-1">
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Límite a</label>
+                                                <input 
+                                                    id="a"
+                                                    type="number" 
+                                                    name="a" 
+                                                    value={inputs.a} 
+                                                    onChange={handleChange}
+                                                    onFocus={handleFocus}
+                                                    className={`w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${activeInput === 'a' ? 'border-blue-400 bg-blue-50' : 'border-gray-300'}`}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Límite b</label>
+                                                <input 
+                                                    id="b"
+                                                    type="number" 
+                                                    name="b" 
+                                                    value={inputs.b} 
+                                                    onChange={handleChange}
+                                                    onFocus={handleFocus}
+                                                    className={`w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${activeInput === 'b' ? 'border-blue-400 bg-blue-50' : 'border-gray-300'}`}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Teclado Matemático */}
+                                    <div className="mt-4 pt-4 border-t border-gray-100">
+                                        <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Teclado Matemático</label>
+                                        <div className="flex flex-wrap gap-2">
+                                            {mathButtons.map((btn, idx) => (
+                                                <button
+                                                    key={idx}
+                                                    onClick={() => insertSymbol(btn.val)}
+                                                    className="btn-math px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded border border-gray-300 transition-colors"
+                                                >
+                                                    {btn.label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <p className="text-xs text-gray-400 mt-2">
+                                            <Icon name="info" className="w-3 h-3 inline mr-1"/>
+                                            Haz clic en un campo (f, g, a, b) para activar la edición y usa los botones.
+                                        </p>
+                                    </div>
+
+                                    {error && (
+                                        <div className="mt-4 p-3 bg-red-50 text-red-700 border border-red-200 rounded flex items-center">
+                                            <Icon name="alert-circle" className="w-5 h-5 mr-2" />
+                                            {error}
+                                        </div>
+                                    )}
+
+                                    <div className="mt-6">
+                                        <button 
+                                            onClick={calculate}
+                                            disabled={loading}
+                                            className="w-full md:w-auto px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded shadow transition-colors flex items-center justify-center"
+                                        >
+                                            {loading ? 'Calculando...' : 'Calcular y Graficar'}
+                                            {!loading && <span className="ml-2"><Icon name="calculator" className="w-4 h-4" /></span>}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Resultados y Gráfica */}
+                                {result && (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
+                                        {/* Columna Desarrollo */}
+                                        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                                            <h3 className="text-lg font-bold text-gray-800 border-b pb-2 mb-4">Desarrollo Paso a Paso</h3>
+                                            
+                                            <div className="space-y-4">
+                                                {result.steps.map((step, idx) => (
+                                                    <div key={idx} className="bg-gray-50 p-2 rounded border border-gray-100">
+                                                        <LatexRenderer formula={step} />
+                                                    </div>
+                                                ))}
+                                                
+                                                <div className="mt-6 p-4 bg-blue-50 border border-blue-100 rounded-lg text-center">
+                                                    <span className="text-sm text-blue-600 font-semibold uppercase tracking-wider">Resultado Final</span>
+                                                    <div className="text-3xl font-bold text-blue-800 mt-2">
+                                                        {result.value} <span className="text-base font-normal text-blue-600">u{mode === 'area' || mode === 'superficie' ? '²' : mode === 'volumen' ? '³' : ''}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Columna Gráfica */}
+                                        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col">
+                                            <h3 className="text-lg font-bold text-gray-800 border-b pb-2 mb-4">Representación Gráfica</h3>
+                                            <div className="flex-grow flex items-center justify-center bg-gray-50 rounded-lg border border-gray-200 relative">
+                                                {/* Contenedor referenciado directamente */}
+                                                <div ref={graphRef} className="graph-wrapper"></div>
+                                                <p className="absolute bottom-2 right-2 text-xs text-gray-400 pointer-events-none">Powered by Function Plot</p>
+                                            </div>
+                                            <p className="text-xs text-center text-gray-500 mt-2">
+                                                {mode === 'volumen' ? 'Nota: Se muestra el perfil 2D. Imagine la rotación en el eje X.' : 'Región sombreada representa el cálculo.'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
