@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calculadora Integral Pro + Gráficos Ajustados</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.8.0/math.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            --glass-bg: rgba(30, 41, 59, 0.85);
+            --glass-border: 1px solid rgba(255, 255, 255, 0.1);
+            --accent: #38bdf8;
+            --accent-hover: #0ea5e9;
+            --text-main: #f8fafc;
+            --input-bg: rgba(15, 23, 42, 0.8);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: var(--bg-gradient);
+            color: var(--text-main);
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            overflow: hidden; /* Evita scroll global si no es necesario */
+        }
+
+        .dashboard {
+            width: 100%;
+            max-width: 1200px;
+            height: 90vh; /* Altura fija relativa para mantener layout */
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            border-radius: 20px;
+            border: var(--glass-border);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            padding: 25px;
+            display: grid;
+            grid-template-columns: 340px 1fr; /* Panel fijo | Gráfico flexible */
+            grid-template-rows: auto 1fr;
+            gap: 20px;
+            overflow-y: auto; /* Scroll interno si es necesario */
+        }
+
+        .header {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            background: linear-gradient(to right, #38bdf8, #818cf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* --- Panel Izquierdo --- */
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+
+        .input-wrapper { position: relative; }
+        .input-wrapper i {
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #94a3b8;
+            font-size: 0.9rem;
+        }
+
+        input, select {
+            width: 100%;
+            background: var(--input-bg);
+            border: 1px solid rgba(255,255,255,0.15);
+            color: white;
+            padding: 10px 10px 10px 35px;
+            border-radius: 8px;
+            font-family: 'Poppins', sans-serif;
+            font-size: 0.9rem;
+        }
+        
+        input:focus { outline: none; border-color: var(--accent); }
+        .active-input { border-color: var(--accent); background: rgba(56, 189, 248, 0.15); }
+
+        /* --- Keypad --- */
+        .keypad {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 6px;
+            background: rgba(0,0,0,0.2);
+            padding: 8px;
+            border-radius: 10px;
+        }
+
+        .key-btn {
+            background: rgba(255,255,255,0.08);
+            border: none;
+            color: white;
+            padding: 8px 0;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: background 0.2s;
+        }
+        .key-btn:hover { background: rgba(255,255,255,0.2); }
+        .key-op { color: var(--accent); font-weight: bold; }
+        .key-del { background: rgba(220, 38, 38, 0.3); }
+
+        .btn-calc {
+            background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .result-card {
+            background: rgba(56, 189, 248, 0.1);
+            border: 1px solid rgba(56, 189, 248, 0.2);
+            border-radius: 10px;
+            padding: 10px;
+            text-align: center;
+            display: none;
+        }
+        .result-card.visible { display: block; }
+        .res-val { font-size: 1.4rem; font-weight: bold; margin: 5px 0; word-break: break-all;}
+
+        /* --- Panel Gráfico (CORREGIDO) --- */
+        .graph-panel {
+            background: rgba(15, 23, 42, 0.5);
+            border-radius: 15px;
+            border: 1px solid rgba(255,255,255,0.05);
+            position: relative;
+            /* Flex para asegurar que el plot ocupe todo */
+            display: flex;
+            flex-direction: column;
+            min-height: 400px; /* Altura mínima asegurada */
+            overflow: hidden; /* Evita que el gráfico se salga */
+        }
+        
+        #plot {
+            flex-grow: 1;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            body { height: auto; overflow: auto; }
+            .dashboard { grid-template-columns: 1fr; height: auto; display: flex; flex-direction: column;}
+            .graph-panel { height: 400px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="dashboard">
+        <div class="header">
+            <h1><i class="fas fa-rocket"></i> Calculadora Integral Pro</h1>
+        </div>
+
+        <div class="controls">
+            <div class="input-wrapper">
+                <i class="fas fa-calculator"></i>
+                <select id="tipoCalculo" onchange="toggleGInput()">
+                    <option value="area">1. Área</option>
+                    <option value="arco">2. Longitud de Arco</option>
+                    <option value="volumen">3. Volumen Rev.</option>
+                    <option value="superficie">4. Sup. Revolución</option>
+                </select>
+            </div>
+
+            <div class="input-wrapper">
+                <i class="fas fa-wave-square"></i>
+                <input type="text" id="funcF" class="math-input active-input" placeholder="f(x)" value="sqrt(x)" onfocus="setFocus('funcF')">
+            </div>
+
+            <div class="input-wrapper" id="groupG">
+                <i class="fas fa-bezier-curve"></i>
+                <input type="text" id="funcG" class="math-input" placeholder="g(x)" value="" onfocus="setFocus('funcG')">
+            </div>
+
+            <div class="keypad">
+                <button class="key-btn" onclick="addText('x')">x</button>
+                <button class="key-btn" onclick="addText('^')">^</button>
+                <button class="key-btn" onclick="addText('^2')">x²</button>
+                <button class="key-btn" onclick="addText('sqrt(')">√</button>
+                
+                <button class="key-btn" onclick="addText('sin(')">sin</button>
+                <button class="key-btn" onclick="addText('cos(')">cos</button>
+                <button class="key-btn" onclick="addText('tan(')">tan</button>
+                <button class="key-btn" onclick="addText('pi')">π</button>
+
+                <button class="key-btn" onclick="addText('(')">(</button>
+                <button class="key-btn" onclick="addText(')')">)</button>
+                <button class="key-btn" onclick="addText('log(')">ln</button>
+                <button class="key-btn" onclick="addText('exp(')">eˣ</button>
+
+                <button class="key-op key-btn" onclick="addText('+')">+</button>
+                <button class="key-op key-btn" onclick="addText('-')">-</button>
+                <button class="key-op key-btn" onclick="addText('*')">×</button>
+                <button class="key-op key-btn" onclick="addText('/')">÷</button>
+                
+                <button class="key-btn key-del" onclick="delChar()"><i class="fas fa-backspace"></i></button>
+                <button class="key-btn key-ac" style="grid-column: span 3; background: #991b1b;" onclick="clearInput()">BORRAR TODO</button>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div class="input-wrapper">
+                    <i class="fas fa-step-forward"></i>
+                    <input type="text" id="limA" value="0" placeholder="a">
+                </div>
+                <div class="input-wrapper">
+                    <i class="fas fa-step-backward"></i>
+                    <input type="text" id="limB" value="4" placeholder="b">
+                </div>
+            </div>
+
+            <button class="btn-calc" onclick="calcular()">
+                <i class="fas fa-play"></i> CALCULAR
+            </button>
+
+            <div id="resultCard" class="result-card">
+                <div style="font-size:0.8rem; color:#ccc;">Resultado:</div>
+                <div id="resVal" class="res-val">---</div>
+                <div id="resPi" style="color:#4ade80; font-size:0.9rem;"></div>
+            </div>
+        </div>
+
+        <div class="graph-panel">
+            <div id="plot"></div>
+        </div>
+    </div>
+
+    <script>
+        // --- GESTIÓN DE INTERFAZ ---
+        let activeInputId = 'funcF';
+        function setFocus(id) {
+            activeInputId = id;
+            document.querySelectorAll('.math-input').forEach(el => el.classList.remove('active-input'));
+            document.getElementById(id).classList.add('active-input');
+        }
+        function addText(txt) {
+            const el = document.getElementById(activeInputId);
+            const [start, end] = [el.selectionStart, el.selectionEnd];
+            el.value = el.value.substring(0, start) + txt + el.value.substring(end);
+            el.focus();
+            el.selectionStart = el.selectionEnd = start + txt.length;
+        }
+        function delChar() {
+            const el = document.getElementById(activeInputId);
+            const start = el.selectionStart;
+            if (start > 0) {
+                el.value = el.value.substring(0, start - 1) + el.value.substring(start);
+                el.focus();
+                el.selectionStart = el.selectionEnd = start - 1;
+            }
+        }
+        function clearInput() { document.getElementById(activeInputId).value = ""; document.getElementById(activeInputId).focus(); }
+        
+        function toggleGInput() {
+            const tipo = document.getElementById('tipoCalculo').value;
+            const gDiv = document.getElementById('groupG');
+            if(tipo === 'area') {
+                gDiv.style.display = 'block';
+            } else {
+                gDiv.style.display = 'none';
+                if(activeInputId === 'funcG') setFocus('funcF');
+            }
+        }
+
+        // --- MATEMÁTICAS ---
+        function evaluar(expr, x) {
+            try {
+                // Filtros de seguridad para evitar números infinitos
+                if (Math.abs(x) < 1e-9 && (expr.includes('1/x') || expr.includes('log'))) return NaN; 
+                return math.evaluate(expr.toLowerCase(), { x: x, pi: Math.PI, e: Math.E });
+            } catch { return NaN; }
+        }
+
+        function integrar(func, a, b, n = 800) {
+            if (n % 2 !== 0) n++;
+            const h = (b - a) / n;
+            let sum = func(a) + func(b);
+            if (!isFinite(sum)) sum = 0; // Protección contra NaN en límites
+
+            for (let i = 1; i < n; i++) {
+                let val = func(a + i * h);
+                if (!isFinite(val)) val = 0; // Ignorar picos infinitos
+                sum += ((i % 2 === 0) ? 2 : 4) * val;
+            }
+            return (sum * h) / 3;
+        }
+
+        function derivada(func, x) {
+            const h = 1e-5;
+            return (func(x + h) - func(x - h)) / (2 * h);
+        }
+
+        // --- CORE ---
+        function calcular() {
+            const strF = document.getElementById('funcF').value;
+            const strG = document.getElementById('funcG').value;
+            const tipo = document.getElementById('tipoCalculo').value;
+            let a, b;
+
+            try {
+                a = math.evaluate(document.getElementById('limA').value.toLowerCase().replace('pi', Math.PI));
+                b = math.evaluate(document.getElementById('limB').value.toLowerCase().replace('pi', Math.PI));
+            } catch { alert("Límites inválidos"); return; }
+
+            const f = (x) => evaluar(strF, x);
+            const g = (strG && tipo === 'area') ? (x) => evaluar(strG, x) : (x) => 0;
+
+            let resultado = 0, integrando;
+            try {
+                if (tipo === 'area') integrando = (x) => Math.abs(f(x) - g(x));
+                else if (tipo === 'arco') integrando = (x) => Math.sqrt(1 + Math.pow(derivada(f, x), 2));
+                else if (tipo === 'volumen') integrando = (x) => Math.PI * Math.pow(f(x), 2);
+                else if (tipo === 'superficie') integrando = (x) => 2 * Math.PI * Math.abs(f(x)) * Math.sqrt(1 + Math.pow(derivada(f, x), 2));
+                
+                resultado = integrar(integrando, a, b);
+            } catch { alert("Error matemático en la función"); return; }
+
+            // Mostrar resultado
+            document.getElementById('resVal').innerText = resultado.toFixed(4);
+            const factor = resultado / Math.PI;
+            const entero = Math.round(factor);
+            if (Math.abs(factor - entero) < 0.001 && entero !== 0) {
+                document.getElementById('resPi').innerText = entero === 1 ? "≈ π" : `≈ ${entero}π`;
+            } else {
+                document.getElementById('resPi').innerText = "";
+            }
+            document.getElementById('resultCard').classList.add('visible');
+
+            graficar(strF, (tipo==='area' ? strG : null), a, b);
+        }
+
+        function graficar(strF, strG, a, b) {
+            const margin = Math.abs(b - a) * 0.2 || 1; 
+            const minX = Math.min(a, b) - margin;
+            const maxX = Math.max(a, b) + margin;
+            
+            const xVals = [], yF = [], yG = [], xFill = [], yFillF = [], yFillG = [];
+            const steps = 300; 
+            
+            // 1. Generar datos del gráfico (evitando infinitos)
+            for (let i = 0; i <= steps; i++) {
+                let x = minX + (i * (maxX - minX) / steps);
+                xVals.push(x);
+                let valF = evaluar(strF, x);
+                let valG = strG ? evaluar(strG, x) : 0;
+                
+                // Limitar valores visuales para que no explote el gráfico (Clamping)
+                if (Math.abs(valF) > 500) valF = NaN; 
+                if (Math.abs(valG) > 500) valG = NaN;
+
+                yF.push(valF);
+                yG.push(valG);
+            }
+
+            // 2. Generar área sombreada (solo entre a y b)
+            const fillSteps = 100;
+            const start = Math.min(a, b), end = Math.max(a, b);
+            for(let i=0; i<=fillSteps; i++){
+                let x = start + (i * (end-start)/fillSteps);
+                xFill.push(x);
+                let vf = evaluar(strF, x);
+                let vg = strG ? evaluar(strG, x) : 0;
+                // Si es infinito, ponemos 0 para que no rompa el fill
+                if (!isFinite(vf)) vf = 0; 
+                if (!isFinite(vg)) vg = 0;
+                yFillF.push(vf);
+                yFillG.push(vg);
+            }
+
+            const data = [
+                {
+                    x: xFill.concat(xFill.slice().reverse()),
+                    y: yFillF.concat(yFillG.slice().reverse()),
+                    fill: 'toself',
+                    fillcolor: 'rgba(56, 189, 248, 0.2)',
+                    line: {width: 0},
+                    name: 'Área',
+                    hoverinfo: 'skip'
+                },
+                { x: xVals, y: yF, type: 'scatter', mode: 'lines', name: 'f(x)', line: {color: '#38bdf8', width: 3} }
+            ];
+
+            if(strG) {
+                data.push({ x: xVals, y: yG, type: 'scatter', mode: 'lines', name: 'g(x)', line: {color: '#f472b6', dash: 'dot', width: 2} });
+            }
+
+            // 3. LAYOUT CORREGIDO (Automargins + Spacing)
+            const layout = {
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                font: { color: '#94a3b8' },
+                margin: { t: 40, r: 20, l: 50, b: 40 }, // Márgenes base
+                xaxis: { 
+                    gridcolor: 'rgba(255,255,255,0.1)', 
+                    title: 'Eje X',
+                    automargin: true, // CLAVE: Evita que los números se corten
+                    zerolinecolor: 'rgba(255,255,255,0.5)'
+                },
+                yaxis: { 
+                    gridcolor: 'rgba(255,255,255,0.1)', 
+                    title: 'Eje Y',
+                    automargin: true, // CLAVE
+                    zerolinecolor: 'rgba(255,255,255,0.5)'
+                },
+                showlegend: true,
+                legend: { orientation: 'h', y: 1.1 },
+                autosize: true 
+            };
+            
+            const config = { responsive: true, displayModeBar: false };
+            Plotly.newPlot('plot', data, layout, config);
+        }
+
+        // Init
+        window.addEventListener('resize', () => { Plotly.Plots.resize('plot'); }); // Forzar ajuste al cambiar ventana
+        toggleGInput();
+        graficar('sqrt(x)', '', 0, 4);
+    </script>
+</body>
+</html>
